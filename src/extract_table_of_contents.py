@@ -10,7 +10,12 @@ from pdf_token_type_labels.TokenType import TokenType
 from TOCExtractor import TOCExtractor
 from configuration import service_logger, title_types, skip_types
 from toc.PdfSegmentation import PdfSegmentation
+from azure.ai.formrecognizer import DocumentAnalysisClient
+from azure.core.credentials import AzureKeyCredential
 
+# Azure credentials and endpoint
+AZURE_ENDPOINT = process.env.AZURE_ENDPOINT
+AZURE_KEY = process.env.AZURE_KEY
 
 def get_file_path(file_name, extension):
     return join(tempfile.gettempdir(), file_name + "." + extension)
@@ -57,11 +62,40 @@ def get_pdf_segments_from_segment_boxes(pdf_features: PdfFeatures, segment_boxes
     return pdf_segments
 
 
+def extract_text_with_azure(file_path):
+    client = DocumentAnalysisClient(endpoint=AZURE_ENDPOINT, credential=AzureKeyCredential(AZURE_KEY))
+    with open(file_path, "rb") as pdf_file:
+        poller = client.begin_analyze_document("prebuilt-document", document=pdf_file)
+        result = poller.result()
+
+    text_segments = []
+    for page in result.pages:
+        for line in page.lines:
+            text_segments.append({
+                "page_number": page.page_number,
+                "left": line.bounding_box[0].x,
+                "top": line.bounding_box[0].y,
+                "width": line.bounding_box[2].x - line.bounding_box[0].x,
+                "height": line.bounding_box[2].y - line.bounding_box[0].y,
+                "text": line.content,
+                "type": "TEXT"
+            })
+
+    return text_segments
+
+
 def extract_table_of_contents(file: AnyStr, segment_boxes: list[dict], skip_document_name=False):
     service_logger.info("Getting TOC")
     pdf_path = pdf_content_to_pdf_path(file)
     pdf_features: PdfFeatures = PdfFeatures.from_pdf_path(pdf_path)
     pdf_segments: list[PdfSegment] = get_pdf_segments_from_segment_boxes(pdf_features, segment_boxes)
+
+    # If no text is found in initial extraction, use Azure OCR
+    if not pdf_segments:
+        service_logger.info("No text found, using Azure OCR")
+        ocr_segments = extract_text_with_azure(pdf_path)
+        pdf_segments = get_pdf_segments_from_segment_boxes(pdf_features, ocr_segments)
+
     title_segments = [segment for segment in pdf_segments if segment.segment_type in title_types]
     if skip_document_name:
         skip_name_of_the_document(pdf_segments, title_segments)
