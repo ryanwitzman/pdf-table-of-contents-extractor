@@ -15,6 +15,11 @@ ENV PATH="$VIRTUAL_ENV/bin:$PATH"
 COPY requirements.txt requirements.txt
 RUN pip install --upgrade pip
 RUN pip --default-timeout=1000 install -r requirements.txt
+RUN pip install --no-cache-dir azure-mgmt-compute \
+                                 azure-mgmt-storage \
+                                 azure-mgmt-resource \
+                                 azure-keyvault-secrets \
+                                 azure-storage-blob
 RUN pip install azure
 WORKDIR /app
 
